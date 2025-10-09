@@ -172,69 +172,34 @@ class EmbeddingModelPool:
 # ============================================================================
 
 @dataclass
-class SanitizationIO:
-    input: Dict[str, str]
-    output: Dict[str, str]
-
-
-@dataclass
-class PlanProcessingIO:
-    input: Dict[str, str]
-    output: Dict[str, dict]
-
-
-@dataclass
-class SegmentationIO:
-    input: Dict[str, dict]
-    output: Dict[str, list]
-
-
-@dataclass
-class EmbeddingIO:
-    input: Dict[str, list]
-    output: Dict[str, list]
-
-
-@dataclass
-class DetectorIO:
-    input: Dict[str, list]
-    output: Dict[str, list]
-
-
-@dataclass
-class FeasibilityIO:
-    input: Dict[str, list]
-    output: Dict[str, dict]
-
-
-@dataclass
-class TeoriaIO:
-    input: Dict[str, list]
-    output: Dict[str, dict]
-
-
-@dataclass
-class DAGIO:
-    input: Dict[str, dict]
-    output: Dict[str, dict]
-
-
-@dataclass
-class EvidenceRegistryIO:
+class PipelineIO:
+    """Generic I/O schema for pipeline stages."""
     input: Dict[str, Any]
-    output: Dict[str, str]
+    output: Dict[str, Any]
 
 
-@dataclass
-class EvaluationIO:
-    input: Dict[str, object]
-    output: Dict[str, dict]
+# Stage-specific IO schemas using PipelineIO as base
+def create_io_schema(input_type: type, output_type: type) -> type:
+    """Factory to create stage-specific IO schemas with proper type hints."""
+    @dataclass
+    class StageIO(PipelineIO):
+        input: Dict[str, input_type]  # type: ignore
+        output: Dict[str, output_type]  # type: ignore
+    return StageIO
 
 
-@dataclass
-class AnswerAssemblyIO:
-    input: Dict[str, Any]
-    output: Dict[str, dict]
+# Explicit type contracts per stage (for documentation and future validation)
+SanitizationIO = create_io_schema(str, str)
+PlanProcessingIO = create_io_schema(str, dict)
+SegmentationIO = create_io_schema(dict, list)
+EmbeddingIO = create_io_schema(list, list)
+DetectorIO = create_io_schema(list, list)
+FeasibilityIO = create_io_schema(list, dict)
+TeoriaIO = create_io_schema(list, dict)
+DAGIO = create_io_schema(dict, dict)
+EvidenceRegistryIO = PipelineIO  # Generic types
+EvaluationIO = PipelineIO  # Generic types
+AnswerAssemblyIO = PipelineIO  # Generic types
 
 
 # ============================================================================
@@ -575,7 +540,8 @@ class AnswerAssembler:
         return "UNKNOWN"
     
     def _calculate_confidence_from_evidence(self, evidence_list: List[Any], score: float) -> float:
-        """Calculate confidence from evidence list."""
+        """Calculate confidence from evidence list (wrapper for backward compatibility)."""
+        # Convert evidence list to proper format and use shared calculation logic
         if not evidence_list:
             return 0.3
         
@@ -584,11 +550,7 @@ class AnswerAssembler:
             for e in evidence_list
         ) / len(evidence_list)
         
-        evidence_factor = min(len(evidence_list) / 3.0, 1.0)
-        extremity = abs(score - 0.5) * 2
-        extremity_penalty = 0.85 if (extremity > 0.7 and len(evidence_list) < 2) else 1.0
-        confidence = avg_evidence_conf * evidence_factor * extremity_penalty
-        return round(min(confidence, 1.0), 2)
+        return self._calculate_confidence_core(len(evidence_list), avg_evidence_conf, score)
     
     def _extract_quotes_from_evidence(self, evidence_list: List[Any], max_quotes: int = 3) -> List[str]:
         """Extract supporting quotes from evidence."""
@@ -660,10 +622,14 @@ class AnswerAssembler:
         if not evidence:
             return 0.3
         avg_evidence_conf = sum(e.confidence for e in evidence) / len(evidence)
-        evidence_factor = min(len(evidence) / 3.0, 1.0)
+        return self._calculate_confidence_core(len(evidence), avg_evidence_conf, score)
+    
+    def _calculate_confidence_core(self, evidence_count: int, avg_confidence: float, score: float) -> float:
+        """Core confidence calculation logic shared by both confidence methods."""
+        evidence_factor = min(evidence_count / 3.0, 1.0)
         extremity = abs(score - 0.5) * 2
-        extremity_penalty = 0.85 if (extremity > 0.7 and len(evidence) < 2) else 1.0
-        confidence = avg_evidence_conf * evidence_factor * extremity_penalty
+        extremity_penalty = 0.85 if (extremity > 0.7 and evidence_count < 2) else 1.0
+        confidence = avg_confidence * evidence_factor * extremity_penalty
         return round(min(confidence, 1.0), 2)
 
     def _extract_quotes(self, evidence: List[EvidenceEntry], max_quotes: int = 3) -> List[str]:
